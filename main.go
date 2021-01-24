@@ -1,14 +1,14 @@
 package main
 
-import ("github.com/gofiber/fiber"
-		"github.com/satori/go.uuid"
-		"gorm.io/gorm"
-		"context"
-		"fmt"
-		"gorm.io/driver/sqlite"
-		"github.com/go-redis/redis"
-		"strconv"
-		"strings")
+import (
+	"github.com/gofiber/fiber"
+	"github.com/satori/go.uuid"
+	"gorm.io/gorm"
+	"fmt"
+	"gorm.io/driver/postgres"
+	"os"
+	"strconv"
+)
 
 type Book struct{
 	gorm.Model
@@ -17,11 +17,19 @@ type Book struct{
 	ISBN string	`json:"isbn"`
 	Author string	`json:"author"`
 }
+type CartItem struct{
+	Book Book `json:"book" gorm:"embedded"`  
+	Quantity int `json:"quantity"`
+	CartRefer int 
+}
+type Cart  struct {
+	gorm.Model
+	Token string `json:"token" gorm:"primaryKey"`
+	Items []CartItem `json:"items" gorm:"ForeignKey:CartRefer"`
+}
 type IdRequest struct{
 	Id int `json:"id"`
 }
-
-
 type CartRequest struct{
 	Id int  `json:"id"`
 	Token string `json:"token"`
@@ -29,25 +37,16 @@ type CartRequest struct{
 }
 
 var db *gorm.DB
-var rdb *redis.Client
-var ctx = context.Background()
 
 func main() {
 	app := fiber.New()
-	var err error
 	//setup the database
-	db, err = gorm.Open(sqlite.Open("test.db"), &gorm.Config{})
-	if err != nil {
-		panic("connection failed")
-	}
+	setupDatabase()
+	//use db conn to migrate
 	db.AutoMigrate(&Book{})
-	//setup the redis
-	rdb = redis.NewClient(&redis.Options{
-        Addr:     "localhost:6379",
-        Password: "", // no password set
-        DB:       0,  // use default DB
-	})
-	//setup the routes
+	db.AutoMigrate(&CartItem{})
+	db.AutoMigrate(&Cart{})
+	//setup routes
 	app.Get("/book/:id",getBook)
 	app.Get("/books",getBooks)
 	app.Post("/book",putBookInCart)
@@ -55,6 +54,27 @@ func main() {
 	app.Get("/cart/:token",getCartItems)
 	app.Post("/create",createBook)
 	app.Listen(":3000")
+}
+
+func setupDatabase(){
+	host := getEnv("POSTGRES_HOST","localhost")
+	user := getEnv("POSTGRES_USER","postgres")
+	password := getEnv("POSTGRES_PASSWORD","")
+	dbname := getEnv("POSGRES_DB","postgres")
+	port := getEnv("POSTGRES_PORT","5432")
+	dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=disable TimeZone=Europe/Berlin",host,user,password,dbname,port)
+	var err error
+	db, err = gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	if err != nil {
+		panic("connection failed")
+	}
+}
+
+func getEnv(key, fallback string) string {
+    if value, ok := os.LookupEnv(key); ok {
+        return value
+    }
+    return fallback
 }
 
 func getBooks(fiberctx *fiber.Ctx) error {
@@ -89,6 +109,7 @@ func getBook(fiberctx *fiber.Ctx) error{
 	}
 	return fiberctx.JSON(book)
 }
+
 func putBookInCart(fiberctx  *fiber.Ctx) error{
 	cartRequest := new(CartRequest)
 	//
@@ -99,46 +120,81 @@ func putBookInCart(fiberctx  *fiber.Ctx) error{
 		})
 	}
 	//
-	cart, err := rdb.Get(ctx,cartRequest.Token).Result()
-	cartMap := getMap(cart)
-	if err!= nil{
+	cart := new(Cart)
+	err := db.Where("token = ?",cartRequest.Token).First(&cart).Error
+	if err != nil {
 		return fiberctx.JSON(fiber.Map{
-			"succes":false,
-			"message":"Something went wrong",
+			"success":false,
+			"message":"could not find cart with that token",
 		})
 	}
-	//add something to the cart
-	if val, ok := cartMap[cartRequest.Id]; ok{
-		cartMap[cartRequest.Id] = val + cartRequest.Quantity
-	}else{
-		cartMap[cartRequest.Id] = cartRequest.Quantity
+	cartItem := new(CartItem)
+	cartItem.Quantity = cartRequest.Quantity
+	book := new(Book)
+
+	err = db.First(&book,cartRequest.Id).Error
+	if err != nil {
+		return fiberctx.JSON(fiber.Map{
+			"success":false,
+			"message":"could not find  book with  that id",
+		})
+	}
+	cartItem.Book = *book
+	
+	cart.Items = append(cart.Items,*cartItem)
+	err = db.Save(&cart).Error
+	if err != nil {
+		return fiberctx.JSON(fiber.Map{
+			"success":false,
+			"message":"could not save to db",
+		})
 	}
 
-	return fiberctx.JSON(fiberctx.JSON(fiber.Map{
+
+	return fiberctx.JSON(fiber.Map{
 		"succes":true,
 		"message":"added to cart",
-	}))
+	})
 }
 
 func getSessionToken(fiberctx *fiber.Ctx) error{
 	uid := uuid.Must(uuid.NewV4())
-	err := rdb.Set(ctx, uid.String(), "", 0).Err()
-	if err != nil{
+	
+	cart := new(Cart)
+	cart.Token = uid.String()
+	result := db.Create(&cart)
+	if result.Error != nil{
 		return fiberctx.JSON(fiber.Map{
 			"success":false,
-			"token":"",
+			"error":result.Error,
 		})
 	}
+
 	return fiberctx.JSON(fiber.Map{
 		"success":true,
 		"token":uid.String(),
 	})
 }
-func getCartItems(fiberctx *fiber.Ctx) error{
-	cartToken := fiberctx.Params("token")
 
-	return fiberctx.SendString(cartToken)
+func getCartItems(fiberctx *fiber.Ctx) error{
+	cartToken := fiberctx.Params("token")	
+	cart := new(Cart)
+	database := db.Where("token = ?",cartToken).First(&cart)
+	err := database.Error
+	fmt.Println(cart)
+	fmt.Println(database.RowsAffected)
+	if err != nil{
+		return fiberctx.JSON(fiber.Map{
+			"success":false,
+			"error":"could not find cart",
+		})
+	}
+	items := []CartItem{}
+	db.Where("cart_refer = ?",cart.ID).Find(&items)
+	print(items)
+	return fiberctx.JSON(items)
 }
+
 func createBook(fiberctx *fiber.Ctx) error{
 	book := new(Book)
 	if err := fiberctx.BodyParser(book); err != nil{
@@ -158,21 +214,4 @@ func createBook(fiberctx *fiber.Ctx) error{
 		"success":true,
 		"message":"successfully added book",
 	})
-}
-
-func getMap(s string) map[int]int {
-	result := make(map[int]int)
-	mapItems := strings.Split(s,"%")
-	for i := 0 ; i <len(mapItems);i++{
-		items := strings.Split(mapItems[i],":")
-		quantity, err := strconv.Atoi(items[1])
-		if err != nil{
-			quantity = 0
-		}
-		id, err:= strconv.Atoi(items[0])
-		if err == nil{
-			result[id] = quantity
-		}
-	}
-	return result
 }
