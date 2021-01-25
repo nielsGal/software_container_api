@@ -115,7 +115,7 @@ func putBookInCart(fiberctx  *fiber.Ctx) error{
 	//
 	if err := fiberctx.BodyParser(cartRequest); err != nil{
 		return fiberctx.JSON(fiber.Map{
-			"succes":false,
+			"success":false,
 			"message":"Something went wrong",
 		})
 	}
