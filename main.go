@@ -152,7 +152,7 @@ func putBookInCart(fiberctx  *fiber.Ctx) error{
 
 
 	return fiberctx.JSON(fiber.Map{
-		"succes":true,
+		"success":true,
 		"message":"added to cart",
 	})
 }
