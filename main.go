@@ -57,11 +57,11 @@ func main() {
 }
 
 func setupDatabase(){
-	host := getEnv("POSTGRES_HOST","localhost")
+	host := getEnv("POSTGRES_SERVICE_SERVICE_HOST","localhost")
+	port := getEnv("POSTGRES_SERVICE_SERVICE_PORT","5432")
 	user := getEnv("POSTGRES_USER","postgres")
 	password := getEnv("POSTGRES_PASSWORD","")
 	dbname := getEnv("POSGRES_DB","postgres")
-	port := getEnv("POSTGRES_PORT","5432")
 	dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=disable TimeZone=Europe/Berlin",host,user,password,dbname,port)
 	var err error
 	db, err = gorm.Open(postgres.Open(dsn), &gorm.Config{})
