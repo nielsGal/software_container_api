@@ -18,6 +18,7 @@ type Book struct{
 	Author string	`json:"author"`
 }
 type CartItem struct{
+	gorm.Model
 	Book Book `json:"book" gorm:"embedded"`  
 	Quantity int `json:"quantity"`
 	CartRefer int 
