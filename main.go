@@ -4,10 +4,11 @@ import (
 	"github.com/gofiber/fiber"
 	"github.com/satori/go.uuid"
 	"gorm.io/gorm"
-	"fmt"
 	"gorm.io/driver/postgres"
-	"os"
+	"fmt"
+	"time"
 	"strconv"
+	"os"
 )
 
 type Book struct{
@@ -64,10 +65,15 @@ func setupDatabase(){
 	password := getEnv("POSTGRES_PASSWORD","")
 	dbname := getEnv("POSGRES_DB","postgres")
 	dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=disable TimeZone=Europe/Berlin",host,user,password,dbname,port)
-	var err error
-	db, err = gorm.Open(postgres.Open(dsn), &gorm.Config{})
-	if err != nil {
-		panic("connection failed")
+	for true {
+		var err error
+		db, err = gorm.Open(postgres.Open(dsn), &gorm.Config{})
+		if (err == nil) {
+			break
+		}
+		
+		fmt.Println("Connection failed. Retrying...")
+		time.Sleep(time.Second)
 	}
 }
 
